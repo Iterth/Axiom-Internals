@@ -1,4 +1,4 @@
-v# Axiom Internals - Advanced Forensic and Analysis Suite
+# Axiom Internals - Advanced Forensic and Analysis Suite
 
 Axiom Internals is a cybersecurity tool made for deep system analysis and threat hunting. Thanks to its fast C++ core engine and modern Python PySide6 UI, nothing happening on your system goes unnoticed.
 
