@@ -5,6 +5,7 @@
 #include "ProcessManager.h"
 #include "RegistryManager.h"
 #include "NetworkManager.h"
+#include "HashManager.h"
 #include "json.hpp"
 #include <string>
 #include <windows.h>
@@ -121,4 +122,16 @@ extern "C" {
         return networkJsonBuffer.c_str();
     }
 
+    // ---------------------------------------------------------
+    // 4. FILE HASHER MODULE BRIDGES
+    // ---------------------------------------------------------
+
+    __declspec(dllexport) const char* GetFileSHA256(const char* filePath) {
+        static std::string lastHash;
+
+        std::wstring wPath = StringToWString(filePath);
+        lastHash = HashManager::CalculateSHA256(wPath);
+
+        return lastHash.c_str();
+    }
 }

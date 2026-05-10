@@ -125,6 +125,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="HashManager.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="NetworkManager.h" />
     <ClInclude Include="ProcessManager.h" />
@@ -132,6 +133,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AxiomAPI.cpp" />
+    <ClCompile Include="HashManager.cpp" />
     <ClCompile Include="NetworkManager.cpp" />
     <ClCompile Include="ProcessManager.cpp" />
     <ClCompile Include="RegistryManager.cpp" />

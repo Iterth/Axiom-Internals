@@ -2,9 +2,11 @@ import sys
 import os
 import ctypes
 import json
+import requests
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QMainWindow, QMessageBox, QTableWidget, 
                                QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QHeaderView,
-                               QMenu, QLineEdit, QAbstractItemView, QStatusBar, QCheckBox, QTabWidget)
+                               QMenu, QLineEdit, QAbstractItemView, QStatusBar, QCheckBox, QTabWidget,
+                               QInputDialog)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 
@@ -12,7 +14,8 @@ class AxiomInternalsGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Axiom Internals - Advanced Forensic & Analysis Suite")
-        self.resize(1150, 750) 
+        self.resize(1150, 750)
+        self.vt_api_key = self.load_config()
 
         # 1. Load Engine (DLL) using ctypes
         dll_path = os.path.abspath(r"C:\GitHub\AxiomInternals\src\x64\Debug\AxiomInternals.dll")
@@ -29,6 +32,9 @@ class AxiomInternalsGUI(QMainWindow):
             self.axiom_engine.DeleteAutoRunKey.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
             self.axiom_engine.DeleteAutoRunKey.restype = ctypes.c_bool
             self.axiom_engine.GetNetworkConnectionsJSON.restype = ctypes.c_char_p
+            self.axiom_engine.GetFileSHA256.restype = ctypes.c_char_p
+            self.axiom_engine.GetFileSHA256.argtypes = [ctypes.c_char_p]
+
             
         except Exception as e:
             QMessageBox.critical(self, "Engine Error", f"Failed to load AxiomInternals.dll:\n{e}")
@@ -264,13 +270,49 @@ class AxiomInternalsGUI(QMainWindow):
 
     def show_process_menu(self, position):
         row = self.table.rowAt(position.y())
-        if row < 0: return 
+        if row < 0: return
+        
         pid = int(self.table.item(row, 0).text())
         name = self.table.item(row, 2).text()
+        path = self.table.item(row, 4).text()
+
         menu = QMenu()
-        terminate_action = menu.addAction("Terminate Process") 
+        terminate_action = menu.addAction(f"Terminate Process: {name} (PID: {pid})")
+        hash_action = menu.addAction(f"Calculate SHA256 Hash")
+        vt_action = menu.addAction(f"🛡️ Analyze with VirusTotal")
+
         action = menu.exec(self.table.viewport().mapToGlobal(position))
-        if action == terminate_action: self.terminate_process(pid, name)
+
+        if action == terminate_action:
+            self.terminate_process(pid, name)
+        elif action == hash_action:
+            if not path or path == ":":
+                QMessageBox.warning(self, "Hash Error", "Executable path not available for this process.")
+                return
+            
+            self.statusBar().showMessage(f"Calculating SHA256 for '{path}'...", 2000)
+            hash_bytes = self.axiom_engine.GetFileSHA256(path.encode('utf-8'))
+            file_hash = hash_bytes.decode('utf-8')
+
+            QApplication.clipboard().setText(file_hash)
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("File Hash Analysis")
+            msg_box.setText(f"<b>Process:</b> {name}<br><b>Path:</b> {path}")
+            msg_box.setInformativeText(f"<b>SHA256 Hash:</b><br>{file_hash}<br><br><span style= 'color:#50fa7b;'><i>[!] Hash copied to clipboard.</i></span>")
+            msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            msg_box.setStyleSheet("background-color: #161b22; color: #c9d1d9;")
+            msg_box.exec()
+
+        elif action == vt_action:
+            if not path or path == ":":
+                QMessageBox.warning(self, "VirusTotal Error", "Executable path not available for this process.")
+                return
+            self.statusBar().showMessage(f"Generating hash for'{name}'...", 1000)
+            hash_bytes = self.axiom_engine.GetFileSHA256(path.encode('utf-8'))
+            file_hash = hash_bytes.decode('utf-8')
+
+            self.analyze_with_virustotal(file_hash, name)
 
     def terminate_process(self, pid, name):
         if self.axiom_engine.KillProcessByPID(pid):
@@ -278,6 +320,71 @@ class AxiomInternalsGUI(QMainWindow):
             self.load_processes() 
         else:
             self.statusBar().showMessage(f"Failed to terminate '{name}'. Access denied.", 5000)
+
+    def analyze_with_virustotal(self, file_hash, process_name):
+        if not self.vt_api_key or self.vt_api_key == "":
+            key, ok = QInputDialog.getText(self, "VirusTotal API Key Required", "Enter your VirusTotal API Key:\n(It will be saved locally to config.json)")
+
+            if ok and key.strip():
+                self.vt_api_key = key.strip()
+                with open("config.json", "w") as f:
+                    json.dump({"vt_api_key": self.vt_api_key}, f)
+                self.statusBar().showMessage("[+] API key saved to config.json. You can now analyze files with VirusTotal.", 5000)
+            else:
+                return
+        
+        url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
+        headers = {"x-apikey": self.vt_api_key}
+
+        self.statusBar().showMessage(f"[*] Querying VirusTotal for '{process_name}'...", 5000)
+
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                stats = data['data']['attributes']['last_analysis_stats']
+
+                malicious = stats.get('malicious', 0)
+                suspicious = stats.get('suspicious', 0)
+                undetected = stats.get('undetected', 0)
+                total = malicious + suspicious + undetected + stats.get('harmless', 0)
+
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle(f"VirusTotal Analysis Result - {process_name}")
+
+                if malicious > 0:
+                    msg_box.setIcon(QMessageBox.Critical)
+                    status_text = f"<span style='color:#ff5555; font-size:16px;'><b>[!] MALICIOUS FILE DETECTED</b></span>"
+                else:
+                    msg_box.setIcon(QMessageBox.Information)
+                    status_text = f"<span style='color:#50fa7b; font-size:16px;'><b>[+] NO MALICIOUS SIGNATURES FOUND</b></span>"
+                
+                report = (f"{status_text}<br><br>"
+                          f"<b>Detections:</b> {malicious} / {total} <br>"
+                          f"<b>Suspicious:</b> {suspicious} <br>"
+                          f"<b>SHA256 Hash:</b><br>{file_hash}<br><br>")
+                msg_box.setText(report)
+                msg_box.setStyleSheet("background-color: #161b22; color: #c9d1d9;")
+                msg_box.exec()
+            elif response.status_code == 404:
+                QMessageBox.information(self, "Not Found", f"<b>{process_name}</b> is completely unknown to VirusTotal.<br><br>Hash: {file_hash}<br><br><i>This could be a custom internal application or a brand new undocumented malware.</i>")
+            else:
+                QMessageBox.warning(self, "API Error", f"VirusTotal API returned an error: {response.status_code}\n{response.text}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Connection Error", f"Failed to connect to VirusTotal API:\n{e}")
+        
+
+    def load_config(self):
+        if os.path.exists("config.json"):
+            try:
+                with open("config.json", "r") as f:
+                    config = json.load(f)
+                    return config.get("vt_api_key", "")
+            except:
+                return ""
+        return ""
+
 
     def toggle_auto_refresh(self, state):
         if self.check_auto_refresh.isChecked(): self.refresh_timer.start(3000) 
