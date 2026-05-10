@@ -1,0 +1,95 @@
+#include "ProcessManager.h"
+#include "RegistryManager.h"
+#include "json.hpp"
+#include <string>
+#include <windows.h>
+
+using json = nlohmann::json;
+
+// --- WRAPPER FUNCTION: WString (UTF-16) to String (UTF-8) Converter ---
+// JSON uses UTF-8 but our processmanager is using WString which is also main language of windows.
+// So thanks to this we can translate them.
+std::string WStringToString(const std::wstring& wstr) {
+	if (wstr.empty()) return std::string();
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
+    std::string strTo(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
+    return strTo;
+}
+// --------------------------------------------------------------------------
+
+// --- WRAPPER FUNCTION: String (UTF-8) to WString (UTF-16) Converter ---
+std::wstring StringToWString(const std::string& str) {
+    if (str.empty()) return std::wstring();
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+    std::wstring wstrTo(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+    return wstrTo;
+}
+// --------------------------------------------------------------------------
+
+// Keeps the data until Python read that.
+static std::string processJsonBuffer;
+static std::string registryJsonBuffer;
+
+// --- STARTUP BRIDGE ---
+extern "C" {
+    // ---------------------------------------------------------
+    // 1. PROCESS MODULE BRIDGES
+    // ---------------------------------------------------------
+
+    __declspec(dllexport) const char* GetProcessListJSON() {
+        ProcessManager::EnableDebugPrivilege();
+
+        std::vector<ProcessInfo> processList = ProcessManager::GetProcessList();
+
+        json jArray = json::array();
+
+        for (const auto& proc : processList) {
+            json jProc;
+            jProc["pid"] = proc.pid;
+            jProc["ppid"] = proc.ppid;
+            jProc["name"] = WStringToString(proc.name);
+            jProc["path"] = WStringToString(proc.fullPath);
+            jProc["threads"] = proc.threadCount;
+
+            jArray.push_back(jProc);
+        }
+
+        processJsonBuffer = jArray.dump();
+        return processJsonBuffer.c_str();
+    }
+
+    __declspec(dllexport) bool KillProcessByPID(DWORD pid) {
+        ProcessManager::EnableDebugPrivilege();
+        return ProcessManager::TerminateProcessByPID(pid);
+    }
+
+    // ---------------------------------------------------------
+    // 2. REGISTRY (AUTO-RUN) MODULE BRIDGES
+    // ---------------------------------------------------------
+
+    __declspec(dllexport) const char* GetAutoRunsJSON() {
+        std::vector<AutoRunInfo> autorunList = RegistryManager::GetAutoRuns();
+
+        json jArray = json::array();
+        for (const auto& item : autorunList) {
+            json jItem;
+            jItem["name"] = WStringToString(item.name);
+            jItem["command"] = WStringToString(item.command);
+            jItem["location"] = WStringToString(item.location);
+            jItem["exists"] = item.exists;
+            jArray.push_back(jItem);
+        }
+
+        registryJsonBuffer = jArray.dump();
+        return registryJsonBuffer.c_str();
+    }
+
+    __declspec(dllexport) bool DeleteAutoRunKey(const char* valueName, const char* locationLabel) {
+        std::wstring wValueName = StringToWString(valueName);
+        std::wstring wLocation = StringToWString(locationLabel);
+
+        return RegistryManager::DeleteAutoRun(wValueName, wLocation);
+    }
+}
