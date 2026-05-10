@@ -26,9 +26,9 @@ class AxiomInternalsGUI(QMainWindow):
             
             # API Setup: Registry Module
             self.axiom_engine.GetAutoRunsJSON.restype = ctypes.c_char_p
-            # Deaktif etme fonksiyonu (Delete yerine Rename mantığı)
             self.axiom_engine.DeleteAutoRunKey.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
             self.axiom_engine.DeleteAutoRunKey.restype = ctypes.c_bool
+            self.axiom_engine.GetNetworkConnectionsJSON.restype = ctypes.c_char_p
             
         except Exception as e:
             QMessageBox.critical(self, "Engine Error", f"Failed to load AxiomInternals.dll:\n{e}")
@@ -48,6 +48,11 @@ class AxiomInternalsGUI(QMainWindow):
         self.setup_autorun_tab()
         self.tabs.addTab(self.autorun_tab, "🚀 Auto-Runs (Registry)")
 
+        # Tab 3: Network Manager
+        self.network_tab = QWidget()
+        self.setup_network_tab()
+        self.tabs.addTab(self.network_tab, "🌐 Network Manager")
+
         # --- 3. INITIALIZATION ---
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage("[*] Ready. Axiom Suite initialized.", 5000)
@@ -56,6 +61,7 @@ class AxiomInternalsGUI(QMainWindow):
         
         self.load_processes()
         self.load_autoruns()
+        self.load_network()
 
     def setup_process_tab(self):
         layout = QVBoxLayout(self.process_tab)
@@ -132,6 +138,57 @@ class AxiomInternalsGUI(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         layout.addWidget(self.autorun_table)
 
+    def setup_network_tab(self):
+        layout = QVBoxLayout(self.network_tab)
+        
+        btn_refresh = QPushButton("Refresh Network Map")
+        btn_refresh.setMinimumHeight(35)
+        btn_refresh.clicked.connect(self.load_network)
+        layout.addWidget(btn_refresh)
+
+        self.net_table = QTableWidget()
+        self.net_table.setColumnCount(5)
+        self.net_table.setHorizontalHeaderLabels(["Local EndPoint", "Remote EndPoint", "State", "PID", "Protocol", "Process Name"])
+        self.net_table.setAlternatingRowColors(True)
+        self.net_table.verticalHeader().setVisible(False)
+        self.net_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.net_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        
+        header = self.net_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        
+        layout.addWidget(self.net_table)
+
+    def load_network(self):
+        json_bytes = self.axiom_engine.GetNetworkConnectionsJSON()
+        net_list = json.loads(json_bytes.decode('utf-8'))
+        
+        self.net_table.setRowCount(0)
+        self.net_table.setRowCount(len(net_list))
+        
+        for row, conn in enumerate(net_list):
+            self.net_table.setItem(row, 0, QTableWidgetItem(conn['local']))
+            self.net_table.setItem(row, 1, QTableWidgetItem(conn['remote']))
+            
+            state_item = QTableWidgetItem(conn['state'])
+            if conn['state'] == "ESTABLISHED":
+                state_item.setForeground(QColor("#50fa7b")) # Green
+            elif conn['state'] in ["LISTENING"]:
+                state_item.setForeground(QColor("#8be9fd")) # Cyan
+            elif "WAIT" in conn['state']:
+                state_item.setForeground(QColor("#ffb86c")) # Orange   
+            
+            self.net_table.setItem(row, 2, state_item)
+            self.net_table.setItem(row, 3, QTableWidgetItem(str(conn['pid'])))
+
+            name_item = QTableWidgetItem(conn['name'])
+            name_item.setFont(QFont("Consolas", 9, QFont.Bold))
+            self.net_table.setItem(row, 4, name_item)
+
+
     # --- REGISTRY LOGIC ---
     def load_autoruns(self):
         json_bytes = self.axiom_engine.GetAutoRunsJSON()
@@ -196,6 +253,7 @@ class AxiomInternalsGUI(QMainWindow):
             self.table.setItem(row, 3, QTableWidgetItem(str(proc['threads'])))
             self.table.setItem(row, 4, QTableWidgetItem(proc['path']))
         self.statusBar().showMessage(f"[+] Enumerated {len(process_list)} active processes.", 5000)
+
 
     def filter_processes(self, text):
         search_text = text.lower()

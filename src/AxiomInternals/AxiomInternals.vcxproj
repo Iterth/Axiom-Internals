@@ -107,6 +107,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);IPHLPAPI.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -125,11 +126,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="json.hpp" />
+    <ClInclude Include="NetworkManager.h" />
     <ClInclude Include="ProcessManager.h" />
     <ClInclude Include="RegistryManager.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AxiomAPI.cpp" />
+    <ClCompile Include="NetworkManager.cpp" />
     <ClCompile Include="ProcessManager.cpp" />
     <ClCompile Include="RegistryManager.cpp" />
   </ItemGroup>

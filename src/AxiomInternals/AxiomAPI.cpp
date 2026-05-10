@@ -1,5 +1,10 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "ProcessManager.h"
 #include "RegistryManager.h"
+#include "NetworkManager.h"
 #include "json.hpp"
 #include <string>
 #include <windows.h>
@@ -31,6 +36,7 @@ std::wstring StringToWString(const std::string& str) {
 // Keeps the data until Python read that.
 static std::string processJsonBuffer;
 static std::string registryJsonBuffer;
+static std::string networkJsonBuffer;
 
 // --- STARTUP BRIDGE ---
 extern "C" {
@@ -92,4 +98,27 @@ extern "C" {
 
         return RegistryManager::DeleteAutoRun(wValueName, wLocation);
     }
+
+    // ---------------------------------------------------------
+    // 3. NETWORK MODULE BRIDGES
+    // ---------------------------------------------------------
+
+    __declspec(dllexport) const char* GetNetworkConnectionsJSON() {
+        std::vector<NetworkConnInfo> netList = NetworkManager::GetActiveConnections();
+
+        json jArray = json::array();
+        for (const auto& conn : netList) {
+            json jConn;
+            jConn["local"] = WStringToString(conn.localAddr) + ":" + std::to_string(conn.localPort);
+            jConn["remote"] = WStringToString(conn.remoteAddr) + ":" + std::to_string(conn.remotePort);
+            jConn["state"] = WStringToString(conn.state);
+            jConn["pid"] = conn.owningPid;
+            jConn["name"] = WStringToString(conn.processName);
+            jArray.push_back(jConn);
+        }
+
+        networkJsonBuffer = jArray.dump();
+        return networkJsonBuffer.c_str();
+    }
+
 }

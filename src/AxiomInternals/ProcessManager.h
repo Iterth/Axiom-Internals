@@ -18,4 +18,5 @@ public:
 	static std::vector<ProcessInfo> GetProcessList();
 	static bool TerminateProcessByPID(DWORD pid);
 	static bool EnableDebugPrivilege();
+	static std::wstring GetProcessNameFromPID(DWORD pid);
 };
