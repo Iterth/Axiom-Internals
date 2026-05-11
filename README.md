@@ -21,7 +21,7 @@ Axiom Internals is a high-performance endpoint detection and response (EDR) and 
 - **WinSock2 & IPHlpApi:** For advanced network mapping.
 
 ### Frontend (User Interface)
-- **Python 3.12:** Application logic and API orchestration.
+- **Python 3.14:** Application logic and API orchestration.
 - **PySide6 (Qt for Python):** For the industrial-grade SOC interface.
 - **Requests:** For asynchronous communication with VirusTotal and Geolocation APIs.
 - **Ctypes:** Bridge for high-speed communication with the C++ DLL.
