@@ -482,7 +482,8 @@ class AxiomInternalsGUI(QMainWindow):
         self.srv_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.srv_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.srv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-
+        self.srv_table.setAlternatingRowColors(True)
+        
         self.srv_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.srv_table.customContextMenuRequested.connect(self.show_service_menu)
         
@@ -794,7 +795,7 @@ class AxiomInternalsGUI(QMainWindow):
             QPushButton:hover { background-color: #30363d; border: 1px solid #8b949e; }
             QPushButton:pressed { background-color: #282e33; }
             
-            QTableWidget { background-color: #0d1117; color: #c9d1d9; gridline-color: #21262d; border: 1px solid #30363d; border-radius: 4px; outline: none; }
+            QTableWidget { background-color: #0d1117; color: #c9d1d9; gridline-color: #21262d; border: 1px solid #30363d; border-radius: 4px; outline: none; alternate-background-color: #161b22; }
             QTableWidget::item { padding: 4px 8px; border-bottom: 1px solid #161b22; }
             QTableWidget::item:selected { background-color: #1f3a5f; color: #ffffff; }
             
