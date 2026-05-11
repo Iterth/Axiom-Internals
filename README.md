@@ -1,25 +1,47 @@
-# Axiom Internals - Advanced Forensic and Analysis Suite
+# Axiom Internals - Advanced Forensic & Analysis Suite
 
-Axiom Internals is a cybersecurity tool made for deep system analysis and threat hunting. Thanks to its fast C++ core engine and modern Python PySide6 UI, nothing happening on your system goes unnoticed.
+Axiom Internals is a high-performance endpoint detection and response (EDR) and digital forensics tool designed for security analysts and threat hunters. By leveraging a low-level C++ engine and a modern Python interface, it provides deep visibility into Windows system internals.
 
-## Features
+## 🛡️ Key Features
 
-* **⚙️ Process Explorer:** Lists all active processes with their PID, thread count, and full file path in real-time. You can kill suspicious processes with a single click.
-* **🚀 Auto-Runs (Registry Scanner):** Detects malware hiding in Windows startup (persistence) and safely deletes them from the registry.
-* **🌐 Network Monitor:** Maps all TCP network connections of your PC. It tracks connection states and shows exactly which application (Process Name) is connecting to where.
-* **🔐 Cryptographic File Hasher:** Quickly calculates the SHA256 digital fingerprint of a suspicious file using the built-in Windows Cryptography API.
-* **🛡️ Threat Intelligence (VirusTotal Integration):** Automatically sends the SHA256 hash of suspicious files to the VirusTotal API. It reports in seconds whether the file is clean or flagged as malware.
+* **⚙️ Advanced Process Explorer:** Real-time process enumeration with PID, PPID, thread counts, and full image paths. Includes safe process termination.
+* **🔧 Windows Services & Drivers:** Direct interaction with the Service Control Manager (SCM). Monitor, Start, or Stop Win32 services and Kernel-mode drivers (crucial for rootkit hunting).
+* **🌐 Network Intelligence:** Maps active TCP/UDP connections to specific processes. Includes integrated **IP-API Geolocation** to trace remote endpoints.
+* **🚀 Auto-Runs (Persistence) Scanner:** Scans critical Windows Registry hives (`Run`, `RunOnce`) to detect malware persistence and allows safe deactivation.
+* **🔐 Cryptographic Hashing:** Generates SHA256 fingerprints of any running executable using the native Windows Cryptography API.
+* **📊 Forensic Reporting:** Generates professional, standalone HTML reports containing process snapshots, file hashes, and live network activity for incident documentation.
+* **🔍 VirusTotal Integration:** Automated threat intelligence querying via VirusTotal V3 API based on file hashes.
 
-## Technologies Used
+## 🛠️ Technology Stack & Dependencies
 
-* **Backend Engine:** C++, Windows API, WinSock2, Wincrypt
-* **Frontend UI:** Python 3, PySide6
-* **Network Integration:** Requests (REST API communication)
+### Backend (Core Engine)
+- **C++20:** High-performance systems programming.
+- **Windows API:** Direct interaction with system handles, SCM, and Registry.
+- **[nlohmann/json](https://github.com/nlohmann/json):** A modern JSON library for C++ used for high-speed data serialization between the engine and UI.
+- **WinSock2 & IPHlpApi:** For advanced network mapping.
 
-## Installation and Usage
+### Frontend (User Interface)
+- **Python 3.12:** Application logic and API orchestration.
+- **PySide6 (Qt for Python):** For the industrial-grade SOC interface.
+- **Requests:** For asynchronous communication with VirusTotal and Geolocation APIs.
+- **Ctypes:** Bridge for high-speed communication with the C++ DLL.
 
-1. Clone or download this project to your computer.
-2. Open the C++ project in the Source Files with Visual Studio and build it in x64 Release or Debug mode. (This will generate the AxiomInternals.dll file).
-3. Install the required Python libraries (pyside6 and requests).
-4. Run the `main_window.py` file.
-5. When you try to analyze a file via VirusTotal, the app will ask for your free API key. This key is saved locally in a `config.json` file and is never shared.
+## 🚀 Installation & Build
+
+1.  **Build the Engine:** Open the C++ solution in Visual Studio. Set the configuration to `Release | x64` and build. This generates `AxiomInternals.dll`.
+2.  **Environment Setup:** Ensure `AxiomInternals.dll` is in the same directory as the Python scripts.
+3.  **Install Requirements:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+4.  **Run the Suite:**
+    ```bash
+    python main_window.py
+    ```
+
+## 📜 License
+
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+
+## ⚠️ Disclaimer
+Axiom Internals is intended for educational and professional security analysis purposes only. Use it responsibly on systems you own or have explicit permission to audit.
