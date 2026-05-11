@@ -1,0 +1,18 @@
+# Visual Studio
+.vs/
+[Dd]ebug/
+[Rr]elease/
+x64/
+*.obj
+*.pdb
+*.user
+*.aps
+*.ncb
+
+# Python
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+config.json
