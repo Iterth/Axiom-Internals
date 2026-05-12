@@ -1,5 +1,6 @@
 #include "ProcessManager.h"
 #include <tlhelp32.h>
+#include <winternl.h>
 
 std::vector<ProcessInfo> ProcessManager::GetProcessList() {
     std::vector<ProcessInfo> processList;
@@ -42,6 +43,8 @@ std::vector<ProcessInfo> ProcessManager::GetProcessList() {
                 info.fullPath = L"<Access Denied>";
             }
 
+            info.commandLine = GetProcessCommandLine(info.pid);
+
             processList.push_back(info);
         } while (Process32Next(hSnapshot, &pe32));
     }
@@ -50,17 +53,20 @@ std::vector<ProcessInfo> ProcessManager::GetProcessList() {
     return processList;
 }
 
+/**
+ * Safely terminates a process while protecting critical kernel PIDs (0 & 4).
+ */
 bool ProcessManager::TerminateProcessByPID(DWORD pid) {
-    // 1. Open the process with termination rights
-    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-    if (hProcess == NULL) {
+    // SECURITY GUARD: Never allow termination of Idle (0) or System (4) processes
+    if (pid <= 4) {
         return false;
     }
 
-    // 2. Execute the termination command
-    BOOL result = TerminateProcess(hProcess, 0);
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (hProcess == NULL) return false;
 
-    CloseHandle(hProcess);
+    BOOL result = TerminateProcess(hProcess, 0);
+    CloseHandle(hProcess); // Always close handles to prevent resource leaks
     return result == TRUE;
 }
 
@@ -112,4 +118,62 @@ std::wstring ProcessManager::GetProcessNameFromPID(DWORD pid) {
 
     CloseHandle(hSnapshot);
     return L"Unknown";
+}
+
+#include "ProcessManager.h"
+#include <tlhelp32.h>
+#include <winternl.h> // Required for NtQueryInformationProcess and PEB structures
+
+// --- INTERNAL HELPERS ---
+// Define the prototype for the undocumented ntdll function
+typedef NTSTATUS(NTAPI* _NtQueryInformationProcess)(
+    HANDLE ProcessHandle,
+    PROCESSINFOCLASS ProcessInformationClass,
+    PVOID ProcessInformation,
+    ULONG ProcessInformationLength,
+    PULONG ReturnLength
+    );
+
+/**
+ * Retrieves the full command line of a process by manually parsing its
+ * Process Environment Block (PEB) within the target process memory space.
+ */
+std::wstring ProcessManager::GetProcessCommandLine(DWORD processID) {
+    std::wstring commandLine = L"<No Command Line / Access Denied>";
+
+    // 1. Open the process with Query and VM_Read rights
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
+    if (!hProcess) return commandLine;
+
+    // 2. Resolve the undocumented NtQueryInformationProcess from ntdll.dll
+    HMODULE hNtDll = GetModuleHandleA("ntdll.dll");
+    if (!hNtDll) { CloseHandle(hProcess); return commandLine; }
+
+    _NtQueryInformationProcess NtQueryInfoProcess = (_NtQueryInformationProcess)GetProcAddress(hNtDll, "NtQueryInformationProcess");
+    if (!NtQueryInfoProcess) { CloseHandle(hProcess); return commandLine; }
+
+    PROCESS_BASIC_INFORMATION pbi;
+    ULONG returnLength = 0;
+
+    // 3. Query ProcessBasicInformation to find the address of the PEB
+    if (NtQueryInfoProcess(hProcess, ProcessBasicInformation, &pbi, sizeof(pbi), &returnLength) >= 0 && pbi.PebBaseAddress) {
+        PEB peb;
+        // 4. Read the PEB structure from target process memory
+        if (ReadProcessMemory(hProcess, pbi.PebBaseAddress, &peb, sizeof(peb), NULL)) {
+            RTL_USER_PROCESS_PARAMETERS rtlParams;
+            // 5. Locate the ProcessParameters block which contains the CommandLine
+            if (ReadProcessMemory(hProcess, peb.ProcessParameters, &rtlParams, sizeof(rtlParams), NULL)) {
+
+                // 6. Allocate buffer and read the actual Unicode CommandLine string
+                PWSTR buffer = new WCHAR[rtlParams.CommandLine.Length / 2 + 1];
+                if (ReadProcessMemory(hProcess, rtlParams.CommandLine.Buffer, buffer, rtlParams.CommandLine.Length, NULL)) {
+                    buffer[rtlParams.CommandLine.Length / 2] = L'\0';
+                    commandLine = buffer;
+                }
+                delete[] buffer;
+            }
+        }
+    }
+    CloseHandle(hProcess);
+    return commandLine;
 }

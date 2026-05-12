@@ -16,9 +16,63 @@ from datetime import datetime
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QMainWindow, QMessageBox, QTableWidget, 
                                QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QHeaderView,
                                QMenu, QLineEdit, QAbstractItemView, QStatusBar, QCheckBox, QTabWidget,
-                               QInputDialog)
-from PySide6.QtCore import Qt, QTimer
+                               QInputDialog, QDialog, QProgressDialog, QTableView)
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QAbstractTableModel
 from PySide6.QtGui import QColor, QFont
+
+# --- BACKGROUND THREADS ---
+class MemoryScannerWorker(QThread):
+    finished = Signal(str)
+
+    def __init__(self, engine, pid):
+        super().__init__()
+        self.engine = engine
+        self.pid = pid
+
+    def run(self):
+        raw_json = self.engine.GetProcessMemoryStringsJSON(self.pid)
+        if raw_json:
+            self.finished.emit(raw_json.decode('utf-8'))
+        else:
+            self.finished.emit("")
+
+# --- CUSTOM TABLE MODEL FOR LARGE DATASETS (FREEZE PROBLEM FIX) ---
+class MemoryStringModel(QAbstractTableModel):
+    def __init__(self, data):
+        super().__init__()
+        self._data = data
+        self._headers = ["Memory Address (Hex)", "Extracted Text"]
+
+    def rowCount(self, /, parent = None):
+        return len(self._data)
+    
+    def columnCount(self, parent=None):
+        return 2
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+
+        row = index.row()
+        col = index.column()
+        item = self._data[row]
+
+        # 1. Display Text
+        if role == Qt.DisplayRole:
+            if col == 0: return item.get("address", "N/A")
+            elif col == 1: return item.get("text", "")
+        
+        # 2. Color Coding for Memory Addresses
+        elif role == Qt.ForegroundRole:
+            if col == 0: return QColor("#50fa7b") 
+            elif col == 1: return QColor("#f8f8f2")
+        
+        return None
+    
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return self._headers[section]
+        return None
 
 class AxiomInternalsGUI(QMainWindow):
     def __init__(self):
@@ -56,8 +110,16 @@ class AxiomInternalsGUI(QMainWindow):
             
             # API Setup: Services Module
             self.axiom_engine.GetWindowsServicesJSON.restype = ctypes.c_char_p
-            self.axiom_engine.ControlServiceByName.argtypes = [ctypes.c_char_p, ctypes.c_bool] # Fixed typo here
+            self.axiom_engine.ControlServiceByName.argtypes = [ctypes.c_char_p, ctypes.c_bool]
             self.axiom_engine.ControlServiceByName.restype = ctypes.c_bool
+
+            #API Setup: Memory Scanning Module
+            self.axiom_engine.GetProcessMemoryStringsJSON.restype = ctypes.c_char_p
+            self.axiom_engine.GetProcessMemoryStringsJSON.argtypes = [ctypes.c_uint32]
+
+            #API Setup: Threat Hunter / Injection Detector Module
+            self.axiom_engine.GetInjectionAnomaliesJSON.argtypes = []
+            self.axiom_engine.GetInjectionAnomaliesJSON.restype = ctypes.c_char_p
             
         except Exception as e:
             QMessageBox.critical(self, "Engine Error", f"Failed to load backend engine (AxiomInternals.dll):\n{e}")
@@ -86,6 +148,11 @@ class AxiomInternalsGUI(QMainWindow):
         self.services_tab = QWidget()
         self.setup_services_tab()
         self.tabs.addTab(self.services_tab, "🔧 Windows Services")
+
+        # Tab 5: Threat Hunter
+        self.threat_tab = QWidget()
+        self.setup_threat_hunter_tab()
+        self.tabs.addTab(self.threat_tab, "🎯 Threat Hunter")
 
         # --- 3. INITIALIZATION ---
         self.setStatusBar(QStatusBar(self))
@@ -128,20 +195,30 @@ class AxiomInternalsGUI(QMainWindow):
         self.refresh_timer.timeout.connect(self.silent_refresh)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5) 
-        self.table.setHorizontalHeaderLabels(["PID", "PPID", "Process Name", "Threads", "Executable Path"])
+        self.table.setColumnCount(6) 
+        self.table.setHorizontalHeaderLabels(["PID", "PPID", "Process Name", "Threads", "Executable Path", "Command Line"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers) 
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows) 
         self.table.verticalHeader().setVisible(False) 
         self.table.setAlternatingRowColors(True) 
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         
         header = self.table.horizontalHeader()
-        for i in range(4): header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Stretch) 
+
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # PID
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents) # PPID
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents) # Threads
+
+        header.setSectionResizeMode(2, QHeaderView.Interactive) # Name
+        header.setSectionResizeMode(4, QHeaderView.Interactive) # Path
+        self.table.setColumnWidth(4, 300)
+
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
         layout.addWidget(self.table)
 
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_process_menu)
+
 
     def load_processes(self):
         """Fetches active processes from the C++ backend and populates the table."""
@@ -161,10 +238,26 @@ class AxiomInternalsGUI(QMainWindow):
             pid_item = QTableWidgetItem(str(proc.get('pid', '')))
             ppid_item = QTableWidgetItem(str(proc.get('ppid', '')))
             name_item = QTableWidgetItem(proc.get('name', ''))
+            name_item.setToolTip(proc.get('name', ''))
             threads_item = QTableWidgetItem(str(proc.get('threads', '')))
             path_item = QTableWidgetItem(proc.get('path', ''))
+            path_item.setToolTip(proc.get("path", ""))
+            cmd_item = QTableWidgetItem(proc.get('command_line', ''))
+            cmd_item.setToolTip(proc.get('command_line', ''))
+
 
             proc_name_lower = proc.get('name', '').lower()
+            cmd_lower = proc.get('command_line', '').lower()
+
+            suspicious_keywords = ["-hidden", "-bypass", "-enc", "encodedcommand", "downloadstring", "invoke-webrequest", "bypass", "amsi"]
+
+            is_suspicious = False
+            
+            for word in suspicious_keywords:
+                if word in cmd_lower:
+                    is_suspicious = True
+                    break
+            
 
             # Color Coding Logic
             if proc.get('pid') in [0, 4]: 
@@ -173,6 +266,13 @@ class AxiomInternalsGUI(QMainWindow):
             elif proc_name_lower in ["svchost.exe", "services.exe", "csrss.exe", "smss.exe", "wininit.exe", "lsass.exe", "winlogon.exe"]:
                 row_color = QColor("#58a6ff") 
                 name_font = QFont("Consolas", 9, QFont.Bold)
+            elif is_suspicious:
+                cmd_item.setForeground(QColor("#ff5555"))
+                font = QFont()
+                font.setBold(True)
+                cmd_item.setFont(font)
+                cmd_item.setToolTip("⚠️ SUSPICIOUS LOTL ACTIVITY DETECTED!")
+            
             else:
                 row_color = QColor("#c9d1d9") 
                 name_font = QFont("Consolas", 9, QFont.Bold)
@@ -197,6 +297,7 @@ class AxiomInternalsGUI(QMainWindow):
             self.table.setItem(row, 2, name_item)
             self.table.setItem(row, 3, threads_item)
             self.table.setItem(row, 4, path_item)
+            self.table.setItem(row, 5, cmd_item)
             
         self.statusBar().showMessage(f"[+] Enumerated {len(process_list)} active processes.", 5000)
 
@@ -218,10 +319,17 @@ class AxiomInternalsGUI(QMainWindow):
         path = self.table.item(row, 4).text()
 
         menu = QMenu()
-        terminate_action = menu.addAction(f"Terminate Process: {name} (PID: {pid})")
-        hash_action = menu.addAction(f"Calculate SHA256 Hash")
+        terminate_action = menu.addAction(f"❌ Terminate Process: {name} (PID: {pid})")
+
+        if pid in [0, 4]:
+            terminate_action.setEnabled(False)
+            terminate_action.setText(f"🛡️ SYSTEM PROTECTED: {name}")
+            
+        hash_action = menu.addAction(f"🔢 Calculate SHA256 Hash")
         vt_action = menu.addAction(f"🛡️ Analyze with VirusTotal")
         report_action = menu.addAction(f"📊 Generate Detailed Report")
+        memory_scan_action = menu.addAction(f"🔍 Scan Process Memory for Strings")
+        copy_action = menu.addAction(f"📋 Copy Value")
 
         action = menu.exec(self.table.viewport().mapToGlobal(position))
 
@@ -236,6 +344,16 @@ class AxiomInternalsGUI(QMainWindow):
                 QMessageBox.warning(self, "Report Error", "Executable path not available for this process.")
                 return
             self.generate_forensic_report(pid, name, path)
+        elif action == memory_scan_action:
+            pid_item = self.table.item(row, 0)
+            if pid_item:
+                pid = int(pid_item.text())
+                self.scan_process_memory(pid)
+        elif action == copy_action:
+            item = self.table.itemAt(position)
+            if item:
+                QApplication.clipboard().setText(item.text())
+
 
     def handle_hash_calculation(self, path, name):
         """Calculates and displays the SHA256 hash of a given file."""
@@ -276,6 +394,95 @@ class AxiomInternalsGUI(QMainWindow):
             self.load_processes() 
         else:
             self.statusBar().showMessage(f"Failed to terminate '{name}'. Access denied.", 5000)
+
+    # ==========================================
+    # MEMORY SCANNING MODULE
+    # ==========================================
+    def scan_process_memory(self, pid):
+        """Initiates a background thread to scan process memory for strings."""
+        self.progress = QProgressDialog(f"Scanning deep memory for PID {pid}...\nThis may take a few seconds.", None, 0, 0, self)
+        self.progress.setWindowTitle("Memory Intelligence")
+        self.progress.setWindowModality(Qt.WindowModal)
+        self.progress.setStyleSheet("background-color: #161b22; color: #58a6ff; font-weight: bold; padding: 10px;")
+        self.progress.setCancelButton(None)
+        self.progress.show()
+
+        # Allow the progress dialog to render before starting the scan
+        QApplication.processEvents()
+
+        # Start the memory scanning in a separate thread to keep the UI responsive
+        self.worker = MemoryScannerWorker(self.axiom_engine, pid)
+        self.worker.finished.connect(lambda data: self.on_memory_scan_finished(data, pid))
+        self.worker.start()
+
+    def on_memory_scan_finished(self, json_string, pid):
+        """ Handles the results from the memory scanning thread and displays them using MVC. """
+        self.progress.close()
+        if not json_string:
+            QMessageBox.warning(self, "Access Denied", f"Cannot read memory of PID {pid}. Process might be protected or system-level.")
+            return
+        try:
+            strings_data = json.loads(json_string)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to parse memory scan results:\n{e}")
+            return
+        if not strings_data:
+            QMessageBox.information(self, "No Strings Found", f"No readable strings found in the memory of PID {pid}.")
+            return
+
+        dialog = QDialog(self)
+        total_found = len(strings_data)
+        
+        dialog.setWindowTitle(f"Memory Strings - PID: {pid} (Total Strings Extracted: {total_found})")
+        dialog.resize(700, 500)
+        
+        layout = QVBoxLayout(dialog)
+
+        mem_view = QTableView()
+        self.mem_model = MemoryStringModel(strings_data)
+        mem_view.setModel(self.mem_model)
+
+        mem_view.verticalHeader().setVisible(False)
+        mem_view.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        mem_view.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        mem_view.setAlternatingRowColors(True)
+        mem_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        mem_view.setStyleSheet(self.table.styleSheet())
+
+        layout.addWidget(mem_view)
+
+        # --- EXPORT TO TXT BUTTON ---
+        export_btn = QPushButton("💾 Export to TXT")
+        export_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #238636;
+                color: white;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #2ea043; }
+        """)
+
+        # The function that button does
+        def export_data():
+            from PySide6.QtWidgets import QFileDialog
+            file_path, _ = QFileDialog.getSaveFileName(dialog, "Save Memory Strings", f"PID_{pid}_Memory.txt", "Text Files (*.txt)")
+            if file_path:
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(f"--- Axiom Internals Memory Dump for PID {pid} ---\n")
+                        f.write(f"Total Strings Extracted: {total_found}\n\n")
+                        for item in strings_data:
+                            f.write(f"[{item.get('address', 'N/A')}] {item.get('text', '')}\n")
+                    QMessageBox.information(dialog, "Success", "Memory strings exported successfully!")
+                except Exception as e:
+                    QMessageBox.critical(dialog, "Error", f"Failed to save file: {e}")
+
+        export_btn.clicked.connect(export_data)
+        layout.addWidget(export_btn)
+
+        dialog.exec()
 
     # ==========================================
     # AUTO-RUNS (REGISTRY) MODULE
@@ -480,6 +687,7 @@ class AxiomInternalsGUI(QMainWindow):
         self.srv_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.srv_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.srv_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.srv_table.verticalHeader().setVisible(False)
         self.srv_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.srv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.srv_table.setAlternatingRowColors(True)
@@ -593,6 +801,105 @@ class AxiomInternalsGUI(QMainWindow):
                     match = True
                     break
             self.srv_table.setRowHidden(row, not match)
+
+    # ==========================================
+    # THREAT HUNDER MODULE
+    # ==========================================
+    def setup_threat_hunter_tab(self):
+        layout = QVBoxLayout(self.threat_tab)
+
+        # Scan Button
+        self.scan_threats_btn = QPushButton("🚀 LAUNCH DEEP SYSTEM SCAN (Memory Anomaly Detection)")
+        self.scan_threats_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #b32d2e;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 12px;
+                border-radius: 4px;
+                border: 1px solid #ff5555;
+            }
+            QPushButton:hover { background-color: #ff5555; }
+        """)
+        self.scan_threats_btn.clicked.connect(self.run_threat_scan)
+        layout.addWidget(self.scan_threats_btn)
+
+        # The Table that Anomalies listed. 
+        self.threat_table = QTableWidget()
+        self.threat_table.setColumnCount(5)
+        self.threat_table.setHorizontalHeaderLabels(["PID", "Process Name", "Injected Address", "Protection", "Risk Level"])
+
+        # Table Settings
+        self.threat_table.verticalHeader().setVisible(False)
+        self.threat_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.threat_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+
+        self.threat_table.setAlternatingRowColors(True)
+        self.threat_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.threat_table.setStyleSheet(self.table.styleSheet()) # Senin o jilet gibi karanlık temanı uygula
+        
+        layout.addWidget(self.threat_table)
+
+    def run_threat_scan(self):
+        self.scan_threats_btn.setText("⏳ SCANNING ALL PROCESSES... PLEASE WAIT")
+        self.scan_threats_btn.setEnabled(False)
+        QApplication.processEvents() # Arayüzün butonu güncellemesine izin ver
+
+        raw_json = self.axiom_engine.GetInjectionAnomaliesJSON()   
+        
+        self.scan_threats_btn.setText("🚀 LAUNCH DEEP SYSTEM SCAN (Memory Anomaly Detection)")
+        self.scan_threats_btn.setEnabled(True)
+
+        if not raw_json:
+            QMessageBox.information(self, "Scan Complete", "System scan completed. No memory injections detected. System is clean.")
+            self.threat_table.setRowCount(0)
+            return
+
+        try:
+            threats_data = json.loads(raw_json.decode('utf-8'))
+        except Exception as e:
+            QMessageBox.critical(self, "Parse Error", f"Failed to parse threat data: {e}")
+            return
+
+        if not threats_data:
+            QMessageBox.information(self, "Scan Complete", "No malicious memory regions found! 🛡️")
+            self.threat_table.setRowCount(0)
+            return
+
+        self.threat_table.setRowCount(len(threats_data))
+        self.threat_table.setUpdatesEnabled(False) # Performance
+
+        for row, item in enumerate(threats_data):
+            pid_cell = QTableWidgetItem(str(item.get("pid", "")))
+            name_cell = QTableWidgetItem(item.get("name", "Unknown"))
+            addr_cell = QTableWidgetItem(item.get("address", "N/A"))
+            prot_cell = QTableWidgetItem(item.get("protection", ""))
+            risk_cell = QTableWidgetItem(item.get("risk_level", ""))
+
+            # Colors for Risk Level
+            if "CRITICAL" in item.get("risk_level", ""):
+                risk_color = QColor("#ff5555") # Definetly Malware 
+            else:
+                risk_color = QColor("#f1fa8c") # Probably JIT or Shellcode
+
+            # Colors
+            for cell in (pid_cell, name_cell, addr_cell, prot_cell, risk_cell):
+                cell.setForeground(risk_color)
+                # Font
+                font = QFont()
+                font.setBold(True)
+                cell.setFont(font)
+
+            self.threat_table.setItem(row, 0, pid_cell)
+            self.threat_table.setItem(row, 1, name_cell)
+            self.threat_table.setItem(row, 2, addr_cell)
+            self.threat_table.setItem(row, 3, prot_cell)
+            self.threat_table.setItem(row, 4, risk_cell)
+
+        self.threat_table.setUpdatesEnabled(True) # Çizimi başlat
+        
+        QMessageBox.warning(self, "Threats Detected!", f"⚠️ CRITICAL ALERT!\n\nDetected {len(threats_data)} suspicious memory injections. Check the Threat Hunter dashboard immediately.")
 
     # ==========================================
     # CYBER INTELLIGENCE & FORENSICS (APIs)
@@ -795,9 +1102,9 @@ class AxiomInternalsGUI(QMainWindow):
             QPushButton:hover { background-color: #30363d; border: 1px solid #8b949e; }
             QPushButton:pressed { background-color: #282e33; }
             
-            QTableWidget { background-color: #0d1117; color: #c9d1d9; gridline-color: #21262d; border: 1px solid #30363d; border-radius: 4px; outline: none; alternate-background-color: #161b22; }
-            QTableWidget::item { padding: 4px 8px; border-bottom: 1px solid #161b22; }
-            QTableWidget::item:selected { background-color: #1f3a5f; color: #ffffff; }
+            QTableWidget, QTableView { background-color: #0d1117; color: #c9d1d9; gridline-color: #21262d; border: 1px solid #30363d; border-radius: 4px; outline: none; alternate-background-color: #161b22; }
+            QTableWidget::item, QTableView::item { padding: 4px 8px; border-bottom: 1px solid #161b22; }
+            QTableWidget::item:selected, QTableView::item:selected { background-color: #1f3a5f; color: #ffffff; }
             
             QHeaderView::section { background-color: #161b22; color: #8b949e; font-weight: bold; border: none; border-bottom: 1px solid #30363d; border-right: 1px solid #21262d; padding: 8px; font-size: 12px; }
             
