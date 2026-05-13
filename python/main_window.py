@@ -79,7 +79,7 @@ class AxiomInternalsGUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("Axiom Internals - Advanced Forensic & Analysis Suite")
         self.resize(1150, 750)
-        self.vt_api_key = self.load_config()
+        self.vt_api_key, self.suspicious_keywords = self.load_config()
 
         # 1. Load Engine (DLL) using ctypes
         # Using a relative path for Release compatibility
@@ -249,11 +249,10 @@ class AxiomInternalsGUI(QMainWindow):
             proc_name_lower = proc.get('name', '').lower()
             cmd_lower = proc.get('command_line', '').lower()
 
-            suspicious_keywords = ["-hidden", "-bypass", "-enc", "encodedcommand", "downloadstring", "invoke-webrequest", "bypass", "amsi"]
 
             is_suspicious = False
             
-            for word in suspicious_keywords:
+            for word in self.suspicious_keywords:
                 if word in cmd_lower:
                     is_suspicious = True
                     break
@@ -268,9 +267,8 @@ class AxiomInternalsGUI(QMainWindow):
                 name_font = QFont("Consolas", 9, QFont.Bold)
             elif is_suspicious:
                 cmd_item.setForeground(QColor("#ff5555"))
-                font = QFont()
-                font.setBold(True)
-                cmd_item.setFont(font)
+                row_color = QColor("#f19326")
+                name_font = QFont("Consolas", 9, QFont.Bold) 
                 cmd_item.setToolTip("⚠️ SUSPICIOUS LOTL ACTIVITY DETECTED!")
             
             else:
@@ -1063,14 +1061,32 @@ class AxiomInternalsGUI(QMainWindow):
     # ==========================================
     def load_config(self):
         """Loads API keys and settings from config.json."""
+        if not os.path.exists("config.json"):
+            self.create_config()
+            
         if os.path.exists("config.json"):
             try:
                 with open("config.json", "r") as f:
                     config = json.load(f)
-                    return config.get("vt_api_key", "")
+                    return config.get("vt_api_key", ""), config.get("suspicious_keywords", [])
             except Exception:
-                return ""
-        return ""
+                return "", []
+        return "", []
+    
+    def create_config(self):
+        try:
+            with open("config.json", "w") as f:
+                default_config = {
+    "vt_api_key": "",
+    "suspicious_keywords": ["-hidden", "-bypass", "-enc", "encodedcommand"]
+}
+                json.dump(default_config, f, indent=4)
+                QMessageBox.information(self, "Info", f"Config file created succesfully (You can change suspicious keywords)")
+        except:
+            return
+        
+        
+        
 
     def toggle_auto_refresh(self, state):
         if self.check_auto_refresh.isChecked(): 
