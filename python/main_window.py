@@ -11,6 +11,7 @@ import ctypes
 import json
 import requests
 import webbrowser
+import yara
 from datetime import datetime
 
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QMainWindow, QMessageBox, QTableWidget, 
@@ -943,8 +944,12 @@ class AxiomInternalsGUI(QMainWindow):
             key, ok = QInputDialog.getText(self, "VirusTotal API Key Required", "Enter your VirusTotal API Key:\n(It will be saved locally to config.json)")
             if ok and key.strip():
                 self.vt_api_key = key.strip()
+                with open("config.json", "r") as f:
+                    new_vt_api_key = json.load(f)
+                    if "vt_api_key" in new_vt_api_key:
+                        new_vt_api_key["vt_api_key"] = key.strip()
                 with open("config.json", "w") as f:
-                    json.dump({"vt_api_key": self.vt_api_key}, f)
+                    json.dump(new_vt_api_key, f, indent=4)
                 self.statusBar().showMessage("[+] API key saved. You can now analyze files.", 5000)
             else:
                 return
@@ -1078,13 +1083,12 @@ class AxiomInternalsGUI(QMainWindow):
             with open("config.json", "w") as f:
                 default_config = {
     "vt_api_key": "",
-    "suspicious_keywords": ["-hidden", "-bypass", "-enc", "encodedcommand"]
+    "suspicious_keywords": ["-hidden", "-bypass", "-enc", "encodedcommand", "downloadstring", "invoke-webrequest", "bypass", "amsi"]
 }
                 json.dump(default_config, f, indent=4)
                 QMessageBox.information(self, "Info", f"Config file created succesfully (You can change suspicious keywords)")
         except:
             return
-        
         
         
 
