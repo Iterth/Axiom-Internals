@@ -946,10 +946,10 @@ class AxiomInternalsGUI(QMainWindow):
                 self.vt_api_key = key.strip()
                 with open("config.json", "r") as f:
                     config_data = json.load(f)
-                    if "vt_api_key" in new_vt_api_key:
+                    if "vt_api_key" in config_data:
                         config_data["vt_api_key"] = key.strip()
                 with open("config.json", "w") as f:
-                    json.dump(new_vt_api_key, f, indent=4)
+                    json.dump(config_data, f, indent=4)
                 self.statusBar().showMessage("[+] API key saved. You can now analyze files.", 5000)
             else:
                 return
