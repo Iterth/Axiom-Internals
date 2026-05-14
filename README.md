@@ -6,7 +6,7 @@ Axiom Internals is a high-performance endpoint detection and response (EDR) and 
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-## 🎯 What's New in V2.0?
+## 🎯 What's New in V2.0.1?
 
 * **Deep Memory Threat Hunter:** Discards static whitelisting. The engine now performs real-time scans of RWX memory regions to detect hidden PE files (**MZ Headers**), effectively identifying Process Hollowing and DLL Injection.
 * **PEB Command-Line Extractor:** Bypasses standard API limitations via `NtQueryInformationProcess`. It parses the **Process Environment Block (PEB)** to retrieve hidden command-line parameters, flagging suspicious LotL activities (e.g., `-EncodedCommand`).
@@ -24,6 +24,7 @@ As a **Transparent Engineer**, I believe in leveraging cutting-edge technology t
 * **Backend:** C++ (WinAPI, NtDll, Toolhelp32, WinSock2)
 * **Frontend:** Python (PySide6 / Qt)
 * **Interoperability:** ctypes & JSON-based memory-safe bridge.
+* **Buf Fixed** While saving virus total api key suspicious keywords are erased.
 
 ## ⚠️ Disclaimer
 Developed for educational and authorized Blue Team/Incident Response purposes only.
