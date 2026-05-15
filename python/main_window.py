@@ -126,6 +126,9 @@ class AxiomInternalsGUI(QMainWindow):
             QMessageBox.critical(self, "Engine Error", f"Failed to load backend engine (AxiomInternals.dll):\n{e}")
             sys.exit()
 
+        # Rules folder check
+        self.create_default_rules()
+
         # --- 2. CORE TABBED ARCHITECTURE ---
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -223,6 +226,17 @@ class AxiomInternalsGUI(QMainWindow):
 
     def load_processes(self):
         """Fetches active processes from the C++ backend and populates the table."""
+        
+        # Adding Yara rules
+        rules_list = os.listdir("rules")
+        list_dict = {}
+        for element in rules_list:
+            list_dict[element] = "rules/" + element
+
+        if not list_dict:
+            return
+
+        rules = yara.compile(filepaths=list_dict)
         json_bytes = self.axiom_engine.GetProcessListJSON()
         if not json_bytes: return
         
@@ -257,6 +271,12 @@ class AxiomInternalsGUI(QMainWindow):
                 if word in cmd_lower:
                     is_suspicious = True
                     break
+
+            if is_suspicious:
+                matches = rules.match(proc.get('path', ''))
+                if matches:
+                    QMessageBox.critical(self, "Suspicious Program", f"YARA Rule matched string: {matches} process: {proc.get('name', '')}")
+            
             
 
             # Color Coding Logic
@@ -1089,6 +1109,34 @@ class AxiomInternalsGUI(QMainWindow):
                 QMessageBox.information(self, "Info", f"Config file created succesfully (You can change suspicious keywords)")
         except:
             return
+        
+    def create_default_rules(self):
+        default_rule = """rule mimikatzdetect{
+    strings:
+        $s1 = {33 DB 8B C3 48 83 C4 20 5B C3}
+        $s2 = {83 64 24 30 00 44 8B 4C 24 48 48 8B 0D}
+        $s3 = {83 64 24 30 00 44 8B 4D D8 48 8B 0D}
+        $s4 = {84 C0 74 44 6A 08 68}
+        $s5 = {8B F0 3B F3 7C 2C 6A 02 6A 10 68}
+        $s6 = {8B F0 85 F6 78 2A 6A 02 6A 10 68}
+    condition:
+    any of them
+}
+"""
+        dir_path = "rules/"
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            with open("rules/mimikatz.yar", "w") as f:
+                f.write(default_rule)
+            QMessageBox.information(self, "Info", "Rules dictionary and mimikatz.yar(default) has been created successfuly. You can add your YARA rules into this folder.")
+        else:
+            if not os.listdir(dir_path):
+                QMessageBox.warning(self, "Warning", "rules folder is empty, please add rules to it.")
+                
+
+
+
+        
         
         
 
