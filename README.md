@@ -24,7 +24,7 @@ As a **Transparent Engineer**, I believe in leveraging cutting-edge technology t
 * **Backend:** C++ (WinAPI, NtDll, Toolhelp32, WinSock2)
 * **Frontend:** Python (PySide6 / Qt)
 * **Interoperability:** ctypes & JSON-based memory-safe bridge.
-* **Buf Fixed** While saving virus total api key suspicious keywords are erased.
+* **Bug Fixed** While saving virus total api key suspicious keywords are erased.
 
 ## ⚠️ Disclaimer
 Developed for educational and authorized Blue Team/Incident Response purposes only.
