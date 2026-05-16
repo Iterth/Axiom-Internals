@@ -1,6 +1,6 @@
 """
 Axiom Internals - Advanced Forensic & Analysis Suite
-Version: 1.0
+Version: 2.1.1
 Description: A professional endpoint detection and response (EDR) tool 
 designed for deep system analysis, threat hunting, and incident response.
 """
@@ -273,6 +273,9 @@ class AxiomInternalsGUI(QMainWindow):
                     break
 
             if is_suspicious:
+                if not proc.get('path', ''):
+                    QMessageBox.warning(self, "Suspicious Program", f"Automatic YARA scan failed. process {proc.get('name', '')} does not have valuable path.")
+                    continue
                 matches = rules.match(proc.get('path', ''))
                 if matches:
                     QMessageBox.critical(self, "Suspicious Program", f"YARA Rule matched string: {matches} process: {proc.get('name', '')}")
@@ -330,6 +333,16 @@ class AxiomInternalsGUI(QMainWindow):
 
     def show_process_menu(self, position):
         """Displays the context menu for process actions."""
+        # Adding Yara rules
+        rules_list = os.listdir("rules")
+        list_dict = {}
+        for element in rules_list:
+            list_dict[element] = "rules/" + element
+
+        if not list_dict:
+            return
+
+        
         row = self.table.rowAt(position.y())
         if row < 0: return
         
@@ -349,6 +362,7 @@ class AxiomInternalsGUI(QMainWindow):
         report_action = menu.addAction(f"📊 Generate Detailed Report")
         memory_scan_action = menu.addAction(f"🔍 Scan Process Memory for Strings")
         copy_action = menu.addAction(f"📋 Copy Value")
+        yara_action = menu.addAction(f"🔍 Scan with YARA")
 
         action = menu.exec(self.table.viewport().mapToGlobal(position))
 
@@ -372,7 +386,17 @@ class AxiomInternalsGUI(QMainWindow):
             item = self.table.itemAt(position)
             if item:
                 QApplication.clipboard().setText(item.text())
-
+        elif action == yara_action:
+            rules = yara.compile(filepaths=list_dict)
+            if not path:
+                QMessageBox.warning(self, "YARA Scan", "There is not valuable path.")
+                return
+            matches = rules.match(path)
+            if matches:
+                QMessageBox.critical(self, "YARA Scan", f"YARA Rule matched string: {matches} process: {name}")
+            else:
+                QMessageBox.information(self, "YARA Scan", f"No matches found for {name}")
+            
 
     def handle_hash_calculation(self, path, name):
         """Calculates and displays the SHA256 hash of a given file."""
@@ -1133,13 +1157,6 @@ class AxiomInternalsGUI(QMainWindow):
             if not os.listdir(dir_path):
                 QMessageBox.warning(self, "Warning", "rules folder is empty, please add rules to it.")
                 
-
-
-
-        
-        
-        
-
     def toggle_auto_refresh(self, state):
         if self.check_auto_refresh.isChecked(): 
             self.refresh_timer.start(3000) 
