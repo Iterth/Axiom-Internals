@@ -8,6 +8,16 @@ Axiom Internals is a high-performance endpoint detection and response (EDR) and 
 
 ---
 
+## 🎯 What's New in v2.1.1?
+
+- **YARA Rule Integration:** With this update YARA scan can be triggered manually on the action menu
+- **Bug fix** Empty path is not crashes YARA scan anymore. 
+
+---
+
+
+---
+
 ## 🎯 What's New in v2.1?
 
 - **YARA Rule Integration:** Suspicious processes are now scanned against YARA rules in real-time. A default `mimikatz.yar` ruleset is auto-generated on first launch. Drop any `.yar` file into the `rules/` folder to extend detection coverage.
