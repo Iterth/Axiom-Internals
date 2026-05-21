@@ -1,10 +1,9 @@
 """
 Axiom Internals - Advanced Forensic & Analysis Suite
-Version: 2.1.1
+Version: 2.2.0
 Description: A professional endpoint detection and response (EDR) tool 
 designed for deep system analysis, threat hunting, and incident response.
 """
-
 import sys
 import os
 import ctypes
@@ -12,14 +11,16 @@ import json
 import requests
 import webbrowser
 import yara
-from datetime import datetime
+from datetime import datetime, timedelta
+from socket import gethostbyname, gethostname
 
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QMainWindow, QMessageBox, QTableWidget, 
                                QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QHeaderView,
                                QMenu, QLineEdit, QAbstractItemView, QStatusBar, QCheckBox, QTabWidget,
-                               QInputDialog, QDialog, QProgressDialog, QTableView)
+                               QInputDialog, QDialog, QProgressDialog, QTableView, QTextEdit)
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QAbstractTableModel
 from PySide6.QtGui import QColor, QFont
+
 
 # --- BACKGROUND THREADS ---
 class MemoryScannerWorker(QThread):
@@ -36,6 +37,52 @@ class MemoryScannerWorker(QThread):
             self.finished.emit(raw_json.decode('utf-8'))
         else:
             self.finished.emit("")
+
+class NetworkMonitorWorker(QThread):
+    alert_signal = Signal(str)
+
+    def __init__(self, port_scan_threshold):
+        super().__init__()
+        self.port_scan_threshold = port_scan_threshold
+        self.running = True
+        self.scan_attempts = {}
+        self.alerted = set()
+
+        self.local_name = gethostname()
+        self.local_ip = gethostbyname(self.local_name)
+
+    def packet_handler(self, pkt):
+        from scapy.all import IP, TCP
+        if IP in pkt and TCP in pkt:
+            ip_src = pkt[IP].src
+            tcp_port = pkt[TCP].dport
+
+            if ip_src == self.local_ip:
+                return
+
+            if ip_src not in self.scan_attempts:
+                self.scan_attempts[ip_src] = {"ports": set(), "timestamps": []}
+
+            if tcp_port not in self.scan_attempts[ip_src]["ports"]:  
+                self.scan_attempts[ip_src]["timestamps"].append(datetime.now())
+                self.scan_attempts[ip_src]["ports"].add(tcp_port)
+            
+            if len(self.scan_attempts[ip_src]["timestamps"]) >= 2:
+                alert_time = self.scan_attempts[ip_src]["timestamps"][0] - self.scan_attempts[ip_src]["timestamps"][-1]
+            else:
+                alert_time = timedelta(0)
+
+            if len(self.scan_attempts[ip_src]["ports"]) >= self.port_scan_threshold and ip_src not in self.alerted and alert_time.total_seconds() <= 300:
+                self.alert_signal.emit(f"ALERT! Port Scan Detected from {ip_src}")
+                self.alerted.add(ip_src)
+
+    def run(self):
+        from scapy.all import sniff
+        sniff(filter="tcp", prn=self.packet_handler, stop_filter=lambda x: not self.running)
+
+    def stop(self):
+        self.running = False
+
 
 # --- CUSTOM TABLE MODEL FOR LARGE DATASETS (FREEZE PROBLEM FIX) ---
 class MemoryStringModel(QAbstractTableModel):
@@ -80,7 +127,7 @@ class AxiomInternalsGUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("Axiom Internals - Advanced Forensic & Analysis Suite")
         self.resize(1150, 750)
-        self.vt_api_key, self.suspicious_keywords = self.load_config()
+        self.vt_api_key, self.suspicious_keywords, self.port_count = self.load_config()
 
         # 1. Load Engine (DLL) using ctypes
         # Using a relative path for Release compatibility
@@ -165,9 +212,31 @@ class AxiomInternalsGUI(QMainWindow):
         self.apply_dark_theme()
         
         self.load_processes()
-        self.load_autoruns()
-        self.load_network()
-        self.load_services()
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+
+    def on_tab_changed(self, index):
+            if index == 1:
+                self.load_autoruns()
+            elif index == 2:
+                self.load_network()
+            elif index == 3:
+                self.load_services()
+    
+    def toggle_monitoring(self):
+        if self.monitor_worker.isRunning():
+                self.monitor_worker.stop()
+                self.btn_monitor.setText("▶️ Start Monitoring")
+                self.btn_monitor.setStyleSheet("QPushButton { background-color:#073826 }" 
+                                  "QPushButton::pressed { background-color: #2c4c3b }")
+        else:
+                self.monitor_worker.start()
+                self.btn_monitor.setText("⏹️ Stop Monitoring")
+                self.btn_monitor.setStyleSheet("QPushButton { background-color: #8b0000 }" 
+                                  "QPushButton::pressed { background-color: #8b0000 }")
+
+    def on_alert(self, message):
+        self.network_log.append(f"🔴 {message}")
+
 
     # ==========================================
     # PROCESS EXPLORER MODULE
@@ -627,11 +696,22 @@ class AxiomInternalsGUI(QMainWindow):
     def setup_network_tab(self):
         """Initializes the UI components for the Network Manager tab."""
         layout = QVBoxLayout(self.network_tab)
-        
+
         btn_refresh = QPushButton("Refresh Network Map")
         btn_refresh.setMinimumHeight(35)
         btn_refresh.clicked.connect(self.load_network)
         layout.addWidget(btn_refresh)
+
+        self.btn_monitor = QPushButton("▶️ Start Monitoring")
+        self.btn_monitor.setMinimumHeight(35)
+        self.btn_monitor.setStyleSheet("QPushButton { background-color:#073826 }" 
+                                  "QPushButton::pressed { background-color: #2c4c3b }")
+        layout.addWidget(self.btn_monitor)
+        
+        self.monitor_worker = NetworkMonitorWorker(port_scan_threshold=int(self.port_count))
+        self.monitor_worker.alert_signal.connect(self.on_alert)
+        self.btn_monitor.clicked.connect(self.toggle_monitoring)
+
 
         self.net_table = QTableWidget()
         self.net_table.setColumnCount(5)
@@ -640,6 +720,20 @@ class AxiomInternalsGUI(QMainWindow):
         self.net_table.verticalHeader().setVisible(False)
         self.net_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.net_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        self.network_log = QTextEdit()
+        self.network_log.setReadOnly(True)
+        self.network_log.setMaximumHeight(150)
+        self.network_log.setStyleSheet("""
+    QTextEdit {
+        background-color: #0d1117;
+        color: #c9d1d9;
+        border: 1px solid #30363d;
+        font-family: Consolas;
+        font-size: 9pt;
+    }
+""")
+        layout.addWidget(self.network_log)
         
         header = self.net_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -773,7 +867,7 @@ class AxiomInternalsGUI(QMainWindow):
             font = QFont("Consolas", 9)
             
             if svc_type == "KERNEL DRIVER":
-                text_color = QColor("#ffb86c") 
+                text_color = QColor("#4f91f3") 
                 font.setBold(True)
                 
             if state_val == "STOPPED":
@@ -1117,7 +1211,7 @@ class AxiomInternalsGUI(QMainWindow):
             try:
                 with open("config.json", "r") as f:
                     config = json.load(f)
-                    return config.get("vt_api_key", ""), config.get("suspicious_keywords", [])
+                    return config.get("vt_api_key", ""), config.get("suspicious_keywords", []), config.get("port_count", "")
             except Exception:
                 return "", []
         return "", []
@@ -1127,11 +1221,14 @@ class AxiomInternalsGUI(QMainWindow):
             with open("config.json", "w") as f:
                 default_config = {
     "vt_api_key": "",
-    "suspicious_keywords": ["-hidden", "-bypass", "-enc", "encodedcommand", "downloadstring", "invoke-webrequest", "bypass", "amsi"]
+    "suspicious_keywords": ["-hidden", "-bypass", "-enc", "encodedcommand", "downloadstring", "invoke-webrequest", "bypass", "amsi"],
+    "port_count": "5"
 }
                 json.dump(default_config, f, indent=4)
                 QMessageBox.information(self, "Info", f"Config file created succesfully (You can change suspicious keywords)")
-        except:
+        except Exception as e:
+            with open("config_create_log.txt", "w") as f:
+                f.write(str(e))
             return
         
     def create_default_rules(self):
