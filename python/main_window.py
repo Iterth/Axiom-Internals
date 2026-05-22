@@ -1,6 +1,6 @@
 """
 Axiom Internals - Advanced Forensic & Analysis Suite
-Version: 2.2.0
+Version: 2.2.1
 Description: A professional endpoint detection and response (EDR) tool 
 designed for deep system analysis, threat hunting, and incident response.
 """
