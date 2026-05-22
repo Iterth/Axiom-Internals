@@ -11,15 +11,17 @@ import json
 import requests
 import webbrowser
 import yara
+import psutil
+import socket
 from datetime import datetime, timedelta
-from socket import gethostbyname, gethostname
+
 
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QMainWindow, QMessageBox, QTableWidget, 
                                QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QHeaderView,
                                QMenu, QLineEdit, QAbstractItemView, QStatusBar, QCheckBox, QTabWidget,
                                QInputDialog, QDialog, QProgressDialog, QTableView, QTextEdit)
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QAbstractTableModel
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QIcon
 
 
 # --- BACKGROUND THREADS ---
@@ -41,15 +43,18 @@ class MemoryScannerWorker(QThread):
 class NetworkMonitorWorker(QThread):
     alert_signal = Signal(str)
 
-    def __init__(self, port_scan_threshold):
+    def __init__(self, port_scan_threshold, whitelisted_ips):
         super().__init__()
         self.port_scan_threshold = port_scan_threshold
+        self.whitelisted_ips = whitelisted_ips
         self.running = True
         self.scan_attempts = {}
         self.alerted = set()
-
-        self.local_name = gethostname()
-        self.local_ip = gethostbyname(self.local_name)
+        self.local_ips = set()
+        for interface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == socket.AF_INET:
+                    self.local_ips.add(addr.address)
 
     def packet_handler(self, pkt):
         from scapy.all import IP, TCP
@@ -57,7 +62,9 @@ class NetworkMonitorWorker(QThread):
             ip_src = pkt[IP].src
             tcp_port = pkt[TCP].dport
 
-            if ip_src == self.local_ip:
+            if ip_src in self.local_ips:
+                return
+            if ip_src in self.whitelisted_ips:
                 return
 
             if ip_src not in self.scan_attempts:
@@ -127,12 +134,21 @@ class AxiomInternalsGUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("Axiom Internals - Advanced Forensic & Analysis Suite")
         self.resize(1150, 750)
-        self.vt_api_key, self.suspicious_keywords, self.port_count = self.load_config()
+        self.vt_api_key, self.suspicious_keywords, self.port_count, self.whitelist_ips = self.load_config()
+
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(__file__)
+
+        icon_path = os.path.join(base_path, "icon.ico")
+        self.setWindowIcon(QIcon(icon_path))
 
         # 1. Load Engine (DLL) using ctypes
         # Using a relative path for Release compatibility
         dll_name = "AxiomInternals.dll"
         dll_path = os.path.abspath(os.path.join(os.path.dirname(__file__), dll_name))
+
         
         # Fallback to current directory if not found in script dir (useful for PyInstaller)
         if not os.path.exists(dll_path):
@@ -173,8 +189,9 @@ class AxiomInternalsGUI(QMainWindow):
             QMessageBox.critical(self, "Engine Error", f"Failed to load backend engine (AxiomInternals.dll):\n{e}")
             sys.exit()
 
-        # Rules folder check
+        # Folders check
         self.create_default_rules()
+        self.create_logs_dir()
 
         # --- 2. CORE TABBED ARCHITECTURE ---
         self.tabs = QTabWidget()
@@ -214,6 +231,8 @@ class AxiomInternalsGUI(QMainWindow):
         self.load_processes()
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
+        self.log_event("SYSTEM", "Axiom Internals")
+
     def on_tab_changed(self, index):
             if index == 1:
                 self.load_autoruns()
@@ -236,6 +255,7 @@ class AxiomInternalsGUI(QMainWindow):
 
     def on_alert(self, message):
         self.network_log.append(f"🔴 {message}")
+        self.log_event("NETWORK_MONITORING", f"🔴 {message}")
 
 
     # ==========================================
@@ -348,6 +368,7 @@ class AxiomInternalsGUI(QMainWindow):
                 matches = rules.match(proc.get('path', ''))
                 if matches:
                     QMessageBox.critical(self, "Suspicious Program", f"YARA Rule matched string: {matches} process: {proc.get('name', '')}")
+                    self.log_event("YARA SCAN", f"🔴 ALERT! YARA Rule matched string: {matches} process: {proc.get('name', '')}")
             
             
 
@@ -463,6 +484,7 @@ class AxiomInternalsGUI(QMainWindow):
             matches = rules.match(path)
             if matches:
                 QMessageBox.critical(self, "YARA Scan", f"YARA Rule matched string: {matches} process: {name}")
+                self.log_event("YARA SCAN", f"🔴 ALERT! YARA Rule matched string: {matches} process: {name}")
             else:
                 QMessageBox.information(self, "YARA Scan", f"No matches found for {name}")
             
@@ -708,7 +730,7 @@ class AxiomInternalsGUI(QMainWindow):
                                   "QPushButton::pressed { background-color: #2c4c3b }")
         layout.addWidget(self.btn_monitor)
         
-        self.monitor_worker = NetworkMonitorWorker(port_scan_threshold=int(self.port_count))
+        self.monitor_worker = NetworkMonitorWorker(port_scan_threshold=int(self.port_count), whitelisted_ips=self.whitelist_ips)
         self.monitor_worker.alert_signal.connect(self.on_alert)
         self.btn_monitor.clicked.connect(self.toggle_monitoring)
 
@@ -1037,6 +1059,7 @@ class AxiomInternalsGUI(QMainWindow):
         self.threat_table.setUpdatesEnabled(True) # Çizimi başlat
         
         QMessageBox.warning(self, "Threats Detected!", f"⚠️ CRITICAL ALERT!\n\nDetected {len(threats_data)} suspicious memory injections. Check the Threat Hunter dashboard immediately.")
+        self.log_event("THREAT HUNTER", f"🔴 ALERT! Detected {len(threats_data)} suspicious memory injections.")
 
     # ==========================================
     # CYBER INTELLIGENCE & FORENSICS (APIs)
@@ -1211,7 +1234,7 @@ class AxiomInternalsGUI(QMainWindow):
             try:
                 with open("config.json", "r") as f:
                     config = json.load(f)
-                    return config.get("vt_api_key", ""), config.get("suspicious_keywords", []), config.get("port_count", "")
+                    return config.get("vt_api_key", ""), config.get("suspicious_keywords", []), config.get("port_count", ""), config.get("whitelist_ips", [])
             except Exception:
                 return "", []
         return "", []
@@ -1222,12 +1245,13 @@ class AxiomInternalsGUI(QMainWindow):
                 default_config = {
     "vt_api_key": "",
     "suspicious_keywords": ["-hidden", "-bypass", "-enc", "encodedcommand", "downloadstring", "invoke-webrequest", "bypass", "amsi"],
-    "port_count": "5"
+    "port_count": "5",
+    "whitelist_ips": ["8.8.8.8", "1.1.1.1"]
 }
                 json.dump(default_config, f, indent=4)
                 QMessageBox.information(self, "Info", f"Config file created succesfully (You can change suspicious keywords)")
         except Exception as e:
-            with open("config_create_log.txt", "w") as f:
+            with open(f"logs/axiom_error_{datetime.now().strftime("%Y-%m-%d")}.log", "a") as f:
                 f.write(str(e))
             return
         
@@ -1253,6 +1277,17 @@ class AxiomInternalsGUI(QMainWindow):
         else:
             if not os.listdir(dir_path):
                 QMessageBox.warning(self, "Warning", "rules folder is empty, please add rules to it.")
+
+    def create_logs_dir(self):
+        dir_path = "logs/"
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+    
+    def log_event(self, category, message):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(f"logs/axiom_{datetime.now().strftime("%Y-%m-%d")}.log", "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] [{category}] {message}\n")
+
                 
     def toggle_auto_refresh(self, state):
         if self.check_auto_refresh.isChecked(): 
