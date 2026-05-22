@@ -1,0 +1,4 @@
+PySide6
+scapy
+yara-python
+requests
