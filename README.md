@@ -8,6 +8,13 @@ Axiom Internals is a high-performance endpoint detection and response (EDR) and 
 
 ---
 
+## 🎯 What's New in v2.2.1?
+
+- **Centralized Log System:** Network Monitor alerts, YARA scan matches, and Threat Hunter detections are now logged to daily log files under the `logs/` directory.
+- **IP Whitelist:** Known safe IP addresses can be added to `config.json` under `whitelist_ips` to suppress false positives in Network Monitor.
+- **Bug Fix:** Network Monitor now correctly detects all local network interface IPs using psutil, preventing false positives on multi-adapter systems.
+- **Bug Fix:** Window and taskbar icon now display correctly in both script and compiled executable modes.
+
 ## 🎯 What's New in v2.2.0?
 
 - **Real-Time Network Monitoring:** The Network Manager tab now features a live port scan detector powered by Scapy. Running in a dedicated background thread, it monitors all incoming TCP traffic and alerts when a suspicious number of unique ports are accessed from a single source IP within a configurable time window.
