@@ -2,7 +2,7 @@
 
 Axiom Internals is a high-performance endpoint detection and response (EDR) and digital forensics tool designed for deep system analysis and proactive threat hunting. By leveraging a low-level C++ engine and a modern Python interface, it provides deep visibility into Windows system internals.
 
-![Version](https://img.shields.io/badge/Version-v2.2.0-blue)
+![Version](https://img.shields.io/badge/Version-v2.2.1-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
