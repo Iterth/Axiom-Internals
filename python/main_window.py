@@ -1234,7 +1234,12 @@ class AxiomInternalsGUI(QMainWindow):
             try:
                 with open("config.json", "r") as f:
                     config = json.load(f)
-                    return config.get("vt_api_key", ""), config.get("suspicious_keywords", []), config.get("port_count", ""), config.get("whitelist_ips", [])
+                    return (
+                            config.get("vt_api_key", ""),
+                            config.get("suspicious_keywords", []),
+                            config.get("port_count", "10"),
+                            config.get("whitelist_ips", [])
+                        )
             except Exception:
                 return "", []
         return "", []
