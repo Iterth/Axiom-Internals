@@ -7,6 +7,14 @@ Axiom Internals is a high-performance endpoint detection and response (EDR) and 
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
+> **⚠️ Project Status: Concluded & Archived**
+> Active development on Axiom Internals has been officially concluded. This project successfully achieved its core goal: building a high-performance bridge between low-level C++ system internals and Python-based forensic architecture.
+> 
+> My engineering focus has now completely shifted to a new architectural challenge: **[Markdown Text Editor (MTE)](https://github.com/Iterth/Markdown-Text-Editor)**, a high-performance, lightweight documentation and text management engine built with PySide6. 
+>
+> *Axiom Internals will remain open-source and public for educational purposes and portfolio demonstration.*
+
+---
 
 ## 🎯 What's New in v2.2.1?
 
